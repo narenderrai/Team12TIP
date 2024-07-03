@@ -1,0 +1,44 @@
+
+public class SQLInjectionScanner {
+
+    // Method to scan for SQL injection vulnerabilities
+    public void scanForSQLInjection(Target target) {
+        List<String> parameters = target.getParameters(); // Get parameters from the target
+
+        for (String parameter : parameters) {
+            String payload = "' OR 1=1 --"; // SQL injection payload
+
+            // Construct a request with the injected payload
+            HttpRequest request = new HttpRequest(target.getUrl());
+            request.setParameter(parameter, payload);
+
+            // Send the request and capture the response
+            HttpResponse response = sendRequest(request);
+
+            // Analyze the response for signs of SQL injection vulnerability
+            if (response.contains("SQL syntax error")) {
+                logVulnerability("SQL Injection detected in parameter: " + parameter);
+                reportVulnerability("SQL Injection", target.getUrl(), parameter);
+            }
+        }
+    }
+
+    // Method to send HTTP request and receive response
+    private HttpResponse sendRequest(HttpRequest request) {
+        // Implementation to send HTTP request and capture response
+        // (This would typically involve making use of HTTP client libraries)
+        return null; // Placeholder for simplicity
+    }
+
+    // Method to log detected vulnerabilities
+    private void logVulnerability(String message) {
+        // Log vulnerability details
+        System.out.println(message);
+    }
+
+    // Method to generate a detailed vulnerability report
+    private void reportVulnerability(String type, String url, String parameter) {
+        // Generate and save a detailed report
+        // (This might involve saving to a database, file, or printing to console)
+    }
+}
