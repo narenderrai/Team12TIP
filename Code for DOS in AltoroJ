@@ -69,7 +69,10 @@ public class AccountViewServlet extends HttpServlet {
 	 * @see HttpServlet#doPost(HttpServletRequest request, HttpServletResponse response)
 	 */
 	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-		//show transactions within the specified date range (if any)
+		/** The parameters startTime and endTime are taken directly from the request without any validation or sanitization due to this 
+		* an attacker can exploit this by sending a request with extremely large startTime and endTime values, potentially leading to a DoS attack by exhausting server resources 
+		*/
+			//show transactions within the specified date range (if any)
 		if (request.getRequestURL().toString().endsWith("showTransactions")){
 			String startTime = request.getParameter("startDate");
 			String endTime = request.getParameter("endDate");
