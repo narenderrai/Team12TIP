@@ -20,7 +20,7 @@ def start_attack(url, threads):
         thread.join()
 
 if __name__ == "__main__":
-    target_url = input("Enter the target URL: ")
-    number_of_threads = int(input("Enter the number of threads: "))
+    target_url = "http://localhost/dvwa/login.php"  # Change to your DVWA URL
+    number_of_threads = 50  # Adjust the number of threads
 
     start_attack(target_url, number_of_threads)
