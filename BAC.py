@@ -3,7 +3,7 @@ from zapv2 import ZAPv2
 # Initialize ZAP instance
 zap = ZAPv2(apikey='your_zap_api_key')
 
-# Target URL
+# Target URL 
 target = 'http://example.com'
 
 # Start ZAP scan
