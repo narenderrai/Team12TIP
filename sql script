@@ -3,9 +3,9 @@ import subprocess
 import re
 
 # Adjust the URL to point to the correct DVWA path
-url = 'http://127.0.0.1/vulnerabilities/sqli/'  # Ensure this URL is correct
+url = ''  # Ensure this URL is correct
 cookies = {
-    'PHPSESSID': 'vf2a0pe10fp2k7pgdsk9jv2270',  # Replace with your actual session cookie
+    'PHPSESSID': '',  # Replace with your actual session cookie
     'security': 'low'  # Ensure this matches the security level set in DVWA
 }
 
