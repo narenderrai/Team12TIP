@@ -4,14 +4,14 @@ import re
 
 # URLs for the XSS vulnerabilities in DVWA
 urls = {
-    "Stored XSS": 'http://127.0.0.1/vulnerabilities/xss_s/',
-    "DOM-based XSS": 'http://127.0.0.1/vulnerabilities/xss_d/',
-    "Reflected XSS": 'http://127.0.0.1/vulnerabilities/xss_r/'
+    "Stored XSS": '',
+    "DOM-based XSS": '',
+    "Reflected XSS": ''
 }
 
 # Session cookies for DVWA
 cookies = {
-    'PHPSESSID': 'qlsnbhgss3unb7kvulvjclulf5',  # Replace with your actual session ID
+    'PHPSESSID': '',  # Replace with your actual session ID
     'security': 'low'  # Ensure this matches your DVWA security level setting
 }
 
