@@ -1,105 +1,137 @@
 import requests
-import logging
+import re
 
-class AccessControlTester:
-    def __init__(self, base_url):
-        self.base_url = base_url
+# Define the base URL for the Flask application
+BASE_URL = "http://127.0.0.1:5000"
 
-    def unauthorized_access(self, endpoint):
-        """Test unauthorized access to endpoints."""
-        try:
-            response = requests.get(self.base_url + endpoint)
-            message = f"Testing unauthorized access to {endpoint}: Status Code {response.status_code}"
-            print(message)
-            logging.info(message)
-            if response.status_code == 200:
-                vulnerability = f"Vulnerability detected in unauthorized access for {endpoint}."
-                print(vulnerability)
-                logging.warning(vulnerability)
-            else:
-                print(f"Access control in place for {endpoint}.")
-                logging.info(f"Access control in place for {endpoint}.")
-        except requests.RequestException as e:
-            logging.error(f"Error testing unauthorized access: {e}")
-            print(f"Error testing unauthorized access: {e}")
+# Static analysis function
+def find_vulnerability_lines(file_path, patterns):
+    vulnerability_lines = []
 
-    def horizontal_privilege_escalation(self, endpoint, user_cookies, target_id):
-        """Test horizontal privilege escalation by accessing another user's data."""
-        try:
-            response = requests.get(self.base_url + endpoint.format(target_id), cookies=user_cookies)
-            message = f"Testing horizontal privilege escalation on {endpoint.format(target_id)}: Status Code {response.status_code}"
-            print(message)
-            logging.info(message)
-            if response.status_code == 200 and target_id in response.text:
-                vulnerability = f"Vulnerability detected in horizontal privilege escalation for {endpoint.format(target_id)}."
-                print(vulnerability)
-                logging.warning(vulnerability)
-            else:
-                print(f"Access control in place for {endpoint.format(target_id)}.")
-                logging.info(f"Access control in place for {endpoint.format(target_id)}.")
-        except requests.RequestException as e:
-            logging.error(f"Error testing horizontal privilege escalation: {e}")
-            print(f"Error testing horizontal privilege escalation: {e}")
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
 
-    def vertical_privilege_escalation(self, endpoint, low_privilege_cookies, high_privilege_action):
-        """Test vertical privilege escalation by attempting high-privilege actions with a low-privilege account."""
-        try:
-            response = requests.post(self.base_url + endpoint, cookies=low_privilege_cookies, data=high_privilege_action)
-            message = f"Testing vertical privilege escalation on {endpoint}: Status Code {response.status_code}"
-            print(message)
-            logging.info(message)
-            if response.status_code == 200:
-                vulnerability = f"Vulnerability detected in vertical privilege escalation for {endpoint}."
-                print(vulnerability)
-                logging.warning(vulnerability)
-            else:
-                print(f"Access control in place for {endpoint}.")
-                logging.info(f"Access control in place for {endpoint}.")
-        except requests.RequestException as e:
-            logging.error(f"Error testing vertical privilege escalation: {e}")
-            print(f"Error testing vertical privilege escalation: {e}")
+        for i, line in enumerate(lines):
+            for pattern in patterns:
+                if re.search(pattern, line):
+                    vulnerability_lines.append((i + 1, line.strip()))
+    
+    return vulnerability_lines
 
-def main():
-    base_url = "http://localhost:8888"
+# Vulnerability checks for Broken Access Control
+def check_idor_vulnerability():
+    try:
+        # Login as user1
+        login_data = {"username": "user1"}
+        response = requests.post(f"{BASE_URL}/login", json=login_data)
+        if response.status_code != 200:
+            print("Login failed.")
+            return False
 
-    # Set up logging to a file
-    logging.basicConfig(filename='access_control_test.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        # Attempt to access another user's order
+        response = requests.get(f"{BASE_URL}/orders/2")
+        if response.status_code == 200 and "user_id" in response.json() and response.json()["user_id"] != 2:
+            print("IDOR vulnerability detected: Accessed another user's order.")
+            return True
+    except Exception as e:
+        print(f"Error during IDOR vulnerability test: {e}")
+    return False
 
-    # Define test cases
-    test_cases = [
-        # Unauthorized Access Test Case
-        {
-            'type': 'unauthorized_access',
-            'endpoint': "/orders?order_id=7"
-        },
+def check_session_management():
+    try:
+        # Login as user1
+        login_data = {"username": "user1"}
+        response = requests.post(f"{BASE_URL}/login", json=login_data)
+        if response.status_code != 200:
+            print("Login failed.")
+            return False
 
-        # Horizontal Privilege Escalation Test Case
-        {
-            'type': 'horizontal_privilege_escalation',
-            'endpoint': "/orders?order_id={}",
-            'cookies': {'session': 'other-user-session-cookie'},  # Replace with another user's session cookie
-            'target_id': '7'  # Assuming this order ID belongs to another user
-        },
+        # Attempt to access another user's document
+        response = requests.get(f"{BASE_URL}/documents/2")
+        if response.status_code == 200 and "user_id" in response.json() and response.json()["user_id"] != 2:
+            print("Improper session management detected: Accessed another user's document.")
+            return True
+    except Exception as e:
+        print(f"Error during session management vulnerability test: {e}")
+    return False
 
-        # Vertical Privilege Escalation Test Case
-        {
-            'type': 'vertical_privilege_escalation',
-            'endpoint': "/admin/update_order",
-            'cookies': {'session': 'low-privilege-session-cookie'},  # Replace with a low-privilege user's session cookie
-            'action': {'order_id': '7', 'status': 'completed'}  # Example of an unauthorized action
-        }
+def check_insecure_function_level_authorization():
+    try:
+        # Login as user1
+        login_data = {"username": "user1"}
+        response = requests.post(f"{BASE_URL}/login", json=login_data)
+        if response.status_code != 200:
+            print("Login failed.")
+            return False
+
+        # Attempt to delete another user's account
+        response = requests.post(f"{BASE_URL}/delete_user/1")
+        if response.status_code == 200:
+            print("Insecure Function-Level Authorization detected: Non-admin user deleted another user's account.")
+            return True
+    except Exception as e:
+        print(f"Error during Function-Level Authorization test: {e}")
+    return False
+
+# New function to analyze code for session management issues
+def check_session_management_in_code(file_path):
+    # Patterns to identify session management issues
+    patterns = [
+        r'session\["user_id"\]',   # Look for usage of session["user_id"]
+        r'/documents/<int:doc_id>', # Look for document access routes
+        r'/orders/<int:order_id>'   # Look for order access routes
     ]
+    
+    return find_vulnerability_lines(file_path, patterns)
 
-    tester = AccessControlTester(base_url)
-    for case in test_cases:
-        if case['type'] == 'unauthorized_access':
-            tester.unauthorized_access(case['endpoint'])
-        elif case['type'] == 'horizontal_privilege_escalation':
-            tester.horizontal_privilege_escalation(case['endpoint'], case['cookies'], case['target_id'])
-        elif case['type'] == 'vertical_privilege_escalation':
-            tester.vertical_privilege_escalation(case['endpoint'], case['cookies'], case['action'])
-        else:
-            logging.error(f"Unknown test case type: {case['type']}")
+# Analyze code for vulnerabilities based on detected vulnerabilities
+def analyze_code_for_vulnerabilities(vulnerabilities):
+    file_path = "app.py"  # Path to your Flask app file
+    analysis_results = {}
+
+    if "IDOR" in vulnerabilities:
+        idor_patterns = [r'/orders/<int:order_id>', r'/documents/<int:doc_id>']
+        idor_vulnerabilities = find_vulnerability_lines(file_path, idor_patterns)
+        if idor_vulnerabilities:
+            analysis_results["IDOR"] = idor_vulnerabilities
+
+    if "Insecure Function-Level Authorization" in vulnerabilities:
+        function_level_patterns = [r'/delete_user/<int:user_id>']
+        function_level_vulnerabilities = find_vulnerability_lines(file_path, function_level_patterns)
+        if function_level_vulnerabilities:
+            analysis_results["Insecure Function-Level Authorization"] = function_level_vulnerabilities
+
+    if "Session Management" in vulnerabilities:
+        session_management_vulnerabilities = check_session_management_in_code(file_path)
+        if session_management_vulnerabilities:
+            analysis_results["Session Management"] = session_management_vulnerabilities
+
+    return analysis_results
 
 if __name__ == "__main__":
-    main()
+    vulnerabilities_detected = []
+
+    print("\nTesting for Broken Access Control Vulnerabilities...\n")
+
+    if check_idor_vulnerability():
+        vulnerabilities_detected.append("IDOR")
+
+    if check_session_management():
+        vulnerabilities_detected.append("Session Management")
+
+    if check_insecure_function_level_authorization():
+        vulnerabilities_detected.append("Insecure Function-Level Authorization")
+
+    if vulnerabilities_detected:
+        print("\nApplication is vulnerable to the following Broken Access Control vulnerabilities:\n - " + "\n - ".join(vulnerabilities_detected) + "\n")
+
+        # Perform code analysis only for the detected vulnerabilities
+        analysis_results = analyze_code_for_vulnerabilities(vulnerabilities_detected)
+
+        for vulnerability_type, lines in analysis_results.items():
+            print(f"\n{vulnerability_type} Vulnerabilities found at lines:")
+            for line_number, line in lines:
+                print(f"Line {line_number}: {line}")
+
+    else:
+        print("\nNo Broken Access Control vulnerabilities detected.\n")
