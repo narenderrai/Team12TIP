@@ -1,44 +1,191 @@
+import requests
+import subprocess
+import re
+from bs4 import BeautifulSoup
 
-public class SQLInjectionScanner {
-
-    // Method to scan for SQL injection vulnerabilities
-    public void scanForSQLInjection(Target target) {
-        List<String> parameters = target.getParameters(); // Get parameters from the target
-
-        for (String parameter : parameters) {
-            String payload = "' OR 1=1 --"; // SQL injection payload
-
-            // Construct a request with the injected payload
-            HttpRequest request = new HttpRequest(target.getUrl());
-            request.setParameter(parameter, payload);
-
-            // Send the request and capture the response
-            HttpResponse response = sendRequest(request);
-
-            // Analyze the response for signs of SQL injection vulnerability
-            if (response.contains("SQL syntax error")) {
-                logVulnerability("SQL Injection detected in parameter: " + parameter);
-                reportVulnerability("SQL Injection", target.getUrl(), parameter);
-            }
-        }
-    }
-
-    // Method to send HTTP request and receive response
-    private HttpResponse sendRequest(HttpRequest request) {
-        // Implementation to send HTTP request and capture response
-        // (This would typically involve making use of HTTP client libraries)
-        return null; // Placeholder for simplicity
-    }
-
-    // Method to log detected vulnerabilities
-    private void logVulnerability(String message) {
-        // Log vulnerability details
-        System.out.println(message);
-    }
-
-    // Method to generate a detailed vulnerability report
-    private void reportVulnerability(String type, String url, String parameter) {
-        // Generate and save a detailed report
-        // (This might involve saving to a database, file, or printing to console)
-    }
+# Adjust the URLs to point to the correct DVWA paths
+urls = {
+    'sqli': 'http://127.0.0.1/vulnerabilities/sqli/',
 }
+cookies = {
+    'PHPSESSID': 'e4lpasml78avcva4t7uj8h79d4',  # Replace with your actual session cookie
+    'security': 'medium'  # Change security level here (low, medium, high)
+}
+
+def submit_option(url, option):
+    """Submit the selected option to the web application and print the main part of the server response."""
+    print(f"Testing option {option} on URL {url}")
+
+    # Fetch the content before submitting the payload
+    try:
+        original_response = requests.get(url, cookies=cookies, timeout=10)
+        original_content = BeautifulSoup(original_response.text, 'html.parser')
+        original_text = original_content.get_text()
+        
+        # Define success patterns or keywords to look for
+        success_keywords = ['ID:', 'First name:', 'Surname:', 'Error:']
+
+        # Submit the payload
+        data = {
+            'id': option,  # Adjust to the specific field name if necessary
+            'Submit': 'Submit'
+        }
+        
+        response = requests.post(url, cookies=cookies, data=data, timeout=10)
+        response.raise_for_status()
+
+        # Extract and parse the response content
+        injected_content = BeautifulSoup(response.text, 'html.parser')
+        injected_text = injected_content.get_text()
+
+        # Check for significant changes in content
+        changes_detected = False
+        for keyword in success_keywords:
+            if keyword in injected_text and keyword not in original_text:
+                changes_detected = True
+                break
+        
+        # Print results based on content comparison
+        if changes_detected:
+            # Extract the main content where the ID and related information is expected
+            main_content = "\n".join(pre.get_text() for pre in injected_content.find_all('pre'))
+            if not main_content.strip():
+                # If <pre> tags are empty, try extracting content from <div> or <p> tags
+                main_content = "\n".join(div.get_text() for div in injected_content.find_all('div'))
+                if not main_content.strip():
+                    main_content = "\n".join(p.get_text() for p in injected_content.find_all('p'))
+                if not main_content.strip():
+                    main_content = "No relevant content found in <pre>, <div>, or <p> tags."
+            result_status = 'SQL Injection Vulnerability Successful'
+        else:
+            main_content = "No relevant content found."
+            result_status = 'No SQL Injection Vulnerability Detected'
+
+        # Output the results
+        print(f"\n--- Results for Option {option} ---")
+        print(f"Security Level: {cookies['security']}")
+        print(f"URL: {url}")
+        print(f"Request Status: {result_status}")
+        print("Content:\n")
+        print(main_content)
+        print("-" * 50)
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+
+def extract_main_content(html):
+    """Extract the main part of the HTML content using BeautifulSoup."""
+    soup = BeautifulSoup(html, 'html.parser')
+    
+    # Define patterns to capture SQL Injection related output
+    patterns = [
+        re.compile(r"ID: \d+", re.IGNORECASE),
+        re.compile(r"First name: \w+", re.IGNORECASE),
+        re.compile(r"Surname: \w+", re.IGNORECASE),
+        re.compile(r"Error: .*", re.IGNORECASE)
+    ]
+    
+    # Find all relevant parts in the HTML content using BeautifulSoup
+    results = []
+    for pattern in patterns:
+        matches = pattern.findall(soup.get_text())
+        results.extend(matches)
+
+    return "\n".join(results) if results else "No relevant content found."
+
+def get_container_id():
+    """Retrieve the container ID for the running DVWA container."""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "ancestor=vulnerables/web-dvwa", "--format", "{{.ID}}"],
+            capture_output=True,
+            text=True
+        )
+        container_id = result.stdout.strip()
+        if not container_id:
+            raise ValueError("No DVWA container found.")
+        return container_id
+    except Exception as e:
+        print(f"Error retrieving container ID: {e}")
+        return None
+
+def list_php_files(directory):
+    """List all PHP files in a given directory inside the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return []
+
+        result = subprocess.run(
+            ["docker", "exec", container_id, "find", directory, "-type", "f", "-name", "*.php"],
+            capture_output=True,
+            text=True
+        )
+        files = result.stdout.strip().split('\n')
+        return files
+    except Exception as e:
+        print(f"Error listing PHP files: {e}")
+        return []
+
+def fetch_php_code(file_path):
+    """Fetch and return the PHP code from the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return ""
+
+        result = subprocess.run(
+            ["docker", "exec", container_id, "cat", file_path],
+            capture_output=True,
+            text=True
+        )
+        return result.stdout
+    except Exception as e:
+        print(f"Error fetching PHP code: {e}")
+        return ""
+
+def extract_vulnerable_code(php_code):
+    """Extract and return all lines containing vulnerable code snippets."""
+    lines = php_code.splitlines()
+    vulnerable_lines = []
+
+    # Regular expression patterns to match vulnerable code snippets
+    patterns = [
+        (re.compile(r"\$query\s*=\s*\"SELECT\s+first_name,\s+last_name\s+FROM\s+users\s+WHERE\s+user_id\s*=\s*\$id;", re.IGNORECASE),
+         "Vulnerable to SQL Injection: Directly includes user input in SQL query without sanitization.")
+    ]
+    
+    for line in lines:
+        for pattern, reason in patterns:
+            if pattern.search(line):
+                vulnerable_lines.append(f"{line}  -- {reason}")
+                break
+    
+    return "\n".join(vulnerable_lines) if vulnerable_lines else "No vulnerable code found."
+
+def main():
+    """Main function to execute the option testing and PHP code analysis."""
+    # Test options 1 to 5
+    for option in range(1, 6):
+        submit_option(urls['sqli'], option)
+
+    # Check PHP files for vulnerabilities
+    php_directory = '/var/www/html/vulnerabilities/sqli/source/'  # Adjust to the correct path if necessary
+    php_files = list_php_files(php_directory)
+    if php_files:
+        for file_path in php_files:
+            print(f"Checking PHP code in file: {file_path}")
+            php_code = fetch_php_code(file_path)
+            if php_code:
+                vulnerable_code = extract_vulnerable_code(php_code)
+                if vulnerable_code:
+                    print(f"\n--- Vulnerable Code in File: {file_path} ---")
+                    print(vulnerable_code)
+                    print("-" * 50)
+                else:
+                    print(f"No vulnerabilities found in file: {file_path}")
+
+if __name__ == "__main__":
+    main()
