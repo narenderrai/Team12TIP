@@ -1,0 +1,127 @@
+from flask import Flask, request, jsonify, session
+import os
+import random
+import string
+import time
+
+app = Flask(__name__)
+app.secret_key = "supersecretkey"  # Secret key for session management
+
+# Simulated database of users, orders, and documents
+users = [
+    {"id": 1, "username": "admin", "role": "admin", "email": "admin@example.com", "phone": "123-456-7890"},
+    {"id": 2, "username": "user1", "role": "user", "email": "user1@example.com", "phone": "234-567-8901"},
+    {"id": 3, "username": "user2", "role": "user", "email": "user2@example.com", "phone": "345-678-9012"}
+]
+
+orders = [
+    {"order_id": 1, "user_id": 2, "product": "Widget A", "price": 19.99, "shipping_address": "123 User1 St."},
+    {"order_id": 2, "user_id": 3, "product": "Widget B", "price": 29.99, "shipping_address": "456 User2 Ave."},
+    {"order_id": 3, "user_id": 2, "product": "Widget C", "price": 39.99, "shipping_address": "123 User1 St."},
+    {"order_id": 4, "user_id": 3, "product": "Widget D", "price": 49.99, "shipping_address": "456 User2 Ave."}
+]
+
+documents = [
+    {"doc_id": 1, "user_id": 2, "content": "User1's bank statement: Account No: 12345678, Balance: $5000"},
+    {"doc_id": 2, "user_id": 3, "content": "User2's tax return: SSN: 987-65-4321, Refund: $2000"},
+    {"doc_id": 3, "user_id": 2, "content": "User1's medical record: Blood Type: O+, Allergies: None"},
+    {"doc_id": 4, "user_id": 3, "content": "User2's employment contract: Salary: $70,000, Start Date: 01/01/2022"}
+]
+
+# User login (no password check for simplicity)
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.json.get("username")
+    user = next((u for u in users if u["username"] == username), None)
+    if user:
+        session["user_id"] = user["id"]
+        session["role"] = user["role"]
+        return jsonify({"message": f"Logged in as {username}"}), 200
+    return jsonify({"message": "User not found"}), 404
+
+# User logout
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.pop("user_id", None)
+    session.pop("role", None)
+    return jsonify({"message": "Logged out"}), 200
+
+# Home route
+@app.route('/')
+def home():
+    return jsonify({"message": "Welcome to the vulnerable Flask app!"}), 200
+
+# Vulnerable to Insecure Direct Object Reference (IDOR)
+@app.route('/orders/<int:order_id>', methods=['GET'])
+def view_order(order_id):
+    # No check if the order belongs to the current user
+    order = next((o for o in orders if o["order_id"] == order_id), None)
+
+    if order:
+        return jsonify(order), 200
+    
+    return jsonify({"message": "Order not found"}), 404
+
+# Vulnerable to Insecure Function-Level Authorization
+@app.route('/delete_user/<int:user_id>', methods=['POST'])
+def delete_user(user_id):
+    # No check if the current user has the permission to delete users
+    global users
+    users = [user for user in users if user["id"] != user_id]
+    return jsonify({"message": f"User {user_id} deleted"}), 200
+
+# Vulnerable to improper Session Management
+@app.route('/documents/<int:doc_id>', methods=['GET'])
+def view_document(doc_id):
+    # No check to ensure the user is accessing their own document
+    document = next((d for d in documents if d["doc_id"] == doc_id), None)
+    if document:
+        return jsonify(document), 200
+    return jsonify({"message": "Document not found"}), 404
+
+# Scenario 2: Uncontrolled File Generation
+@app.route('/generate_files', methods=['POST'])
+def generate_files():
+    number_of_files = int(request.json.get("number_of_files", 0))
+    file_size = int(request.json.get("file_size", 1024))  # Size in bytes
+    
+    file_names = []
+    for _ in range(number_of_files):
+        file_name = ''.join(random.choices(string.ascii_letters, k=10)) + ".txt"
+        file_path = os.path.join("tmp", file_name)
+        with open(file_path, "wb") as f:
+            f.write(os.urandom(file_size))  # Vulnerability: Uncontrolled file creation
+        file_names.append(file_name)
+    
+    return jsonify({"files": file_names}), 200
+
+# Scenario 3: Uncontrolled Memory Consumption
+@app.route('/allocate_memory', methods=['POST'])
+def allocate_memory():
+    size = int(request.json.get("size", 1024))  # Size in MB
+    allocation = " " * (size * 1024 * 1024)  # Vulnerability: Uncontrolled memory allocation
+    return jsonify({"status": "Memory allocated"}), 200
+
+# Scenario 4: Uncontrolled File Upload
+@app.route('/upload_file', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"message": "No file part"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"message": "No selected file"}), 400
+
+    # Vulnerability: No restriction on file size or number of uploads
+    file.save(os.path.join("uploads", file.filename))
+    
+    return jsonify({"message": "File uploaded successfully"}), 200
+
+if __name__ == "__main__":
+    # Ensure required directories exist
+    if not os.path.exists("tmp"):
+        os.mkdir("tmp")
+    if not os.path.exists("uploads"):
+        os.mkdir("uploads")
+    
+    app.run(debug=True)
