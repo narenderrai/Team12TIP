@@ -1,106 +1,109 @@
 import requests
-import time
-import threading
+import re
 
-# Configuration
-DVWA_URL = "http://localhost/dvwa/vulnerable_endpoint"  # Replace with the actual endpoint
-USERNAME = "admin"
-PASSWORD = "password"
-MAX_REQUESTS = 100
-DELAY = 0.2  # Delay between requests in seconds
-THRESHOLD_RESPONSE_TIME = 1.0  # Threshold for response time concern in seconds
-THRESHOLD_REQUESTS_PER_SECOND = 5  # Max requests per second before considering abnormal
+# Define the base URL for the Flask application
+BASE_URL = "http://127.0.0.1:5000"
 
-# Function to login to DVWA and return session
-def login_to_dvwa():
-    """Login to DVWA to obtain session cookie."""
-    login_url = "http://localhost/dvwa/login.php"
-    session = requests.Session()
-    login_data = {
-        'username': USERNAME,
-        'password': PASSWORD,
-        'Login': 'Login'
-    }
-    response = session.post(login_url, data=login_data)
-    if "Login failed" in response.text:
-        print("Failed to login to DVWA.")
-        return None
-    return session
-
-# Function to test resource consumption
-def test_resource_consumption(session):
-    """Test the specified resource for uncontrolled consumption."""
-    response_times = []
-    request_count = 0
-    start_time = time.time()
+# Static analysis function to identify routes handling Uncontrolled Resource Consumption
+def find_routes_and_check_urc_vulnerabilities(file_path, pattern):
+    vulnerability_lines = []
     
-    for i in range(MAX_REQUESTS):
-        current_time = time.time()
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
         
-        # Check request rate
-        elapsed_time = current_time - start_time
-        if elapsed_time > 0:
-            requests_per_second = request_count / elapsed_time
-            if requests_per_second > THRESHOLD_REQUESTS_PER_SECOND:
-                print(f"Warning: Requests per second ({requests_per_second}) exceed threshold!")
-                break
+        for i, line in enumerate(lines):
+            if re.search(pattern, line):
+                vulnerability_lines.append((i + 1, line.strip()))
         
-        # Send request and measure response time
-        start_request_time = time.time()
-        response = session.get(DVWA_URL)
-        elapsed_request_time = time.time() - start_request_time
-        response_times.append(elapsed_request_time)
-        request_count += 1
+    return vulnerability_lines
 
-        print(f"Request {i+1}: Response Time = {elapsed_request_time:.2f}s, Status Code = {response.status_code}")
-        
-        if response.status_code != 200:
-            print("Non-200 status code detected, stopping test.")
-            break
-        
-        # Analyze response times for any unusual spikes
-        if len(response_times) > 5:
-            avg_response_time = sum(response_times[-5:]) / 5
-            if avg_response_time > THRESHOLD_RESPONSE_TIME:
-                print("Warning: Average response time increased significantly!")
-                break
-        
-        # Delay between requests
-        time.sleep(DELAY)
+# Vulnerability checks for Uncontrolled Resource Consumption
+def check_uncontrolled_file_generation():
+    try:
+        # Attempt to generate a large number of files
+        data = {"number_of_files": 1000, "file_size": 1024}  # Large number of files with a 1KB size each
+        response = requests.post(f"{BASE_URL}/generate_files", json=data)
+        if response.status_code == 200:
+            print("Uncontrolled File Generation vulnerability detected: Generated a large number of files.")
+            return True
+    except Exception as e:
+        print(f"Error during Uncontrolled File Generation test: {e}")
+    return False
 
-# Function to monitor system resources (mock)
-def monitor_resources():
-    """Mock function to monitor system resources."""
-    # This can be expanded to check actual system resource utilization
-    # using libraries like psutil or other monitoring tools.
-    while True:
-        # Simulate monitoring
-        cpu_usage = 10  # Placeholder for CPU usage
-        memory_usage = 100  # Placeholder for memory usage in MB
-        
-        print(f"CPU Usage: {cpu_usage}%, Memory Usage: {memory_usage}MB")
-        
-        # Implement logic to detect abnormal resource usage
-        if cpu_usage > 80 or memory_usage > 500:
-            print("Warning: High resource usage detected!")
-        
-        time.sleep(1)  # Monitoring interval
+def check_uncontrolled_memory_consumption():
+    try:
+        # Attempt to allocate a large amount of memory
+        data = {"size": 1024}  # 1024 MB (1 GB)
+        response = requests.post(f"{BASE_URL}/allocate_memory", json=data)
+        if response.status_code == 200:
+            print("Uncontrolled Memory Consumption vulnerability detected: Allocated a large amount of memory.")
+            return True
+    except Exception as e:
+        print(f"Error during Uncontrolled Memory Consumption test: {e}")
+    return False
 
-def main():
-    session = login_to_dvwa()
-    if session:
-        print("Logged in successfully. Starting resource consumption test.")
+def check_uncontrolled_file_upload():
+    try:
+        # Attempt to upload a large file
+        with open("large_file.txt", "wb") as f:
+            f.write(b"A" * 1024 * 1024 * 10)  # 10MB file
         
-        # Start monitoring resources in a separate thread
-        monitoring_thread = threading.Thread(target=monitor_resources)
-        monitoring_thread.start()
-        
-        test_resource_consumption(session)
-        
-        # Stop monitoring after test completion
-        monitoring_thread.join(timeout=1)
-    else:
-        print("Unable to perform test without valid session.")
+        with open("large_file.txt", "rb") as f:
+            files = {"file": f}
+            response = requests.post(f"{BASE_URL}/upload_file", files=files)
+            if response.status_code == 200:
+                print("Uncontrolled File Upload vulnerability detected: Uploaded a large file.")
+                return True
+    except Exception as e:
+        print(f"Error during Uncontrolled File Upload test: {e}")
+    return False
+
+# Analyze code for vulnerabilities based on detected vulnerabilities
+def analyze_code_for_vulnerabilities(vulnerabilities):
+    file_path = "app.py"  # Path to your Flask app file
+    analysis_results = {}
+
+    if "Uncontrolled File Generation" in vulnerabilities:
+        file_generation_vulnerabilities = find_routes_and_check_urc_vulnerabilities(file_path, r'/generate_files')
+        if file_generation_vulnerabilities:
+            analysis_results["Uncontrolled File Generation"] = file_generation_vulnerabilities
+
+    if "Uncontrolled Memory Consumption" in vulnerabilities:
+        memory_consumption_vulnerabilities = find_routes_and_check_urc_vulnerabilities(file_path, r'/allocate_memory')
+        if memory_consumption_vulnerabilities:
+            analysis_results["Uncontrolled Memory Consumption"] = memory_consumption_vulnerabilities
+
+    if "Uncontrolled File Upload" in vulnerabilities:
+        file_upload_vulnerabilities = find_routes_and_check_urc_vulnerabilities(file_path, r'/upload_file')
+        if file_upload_vulnerabilities:
+            analysis_results["Uncontrolled File Upload"] = file_upload_vulnerabilities
+
+    return analysis_results
 
 if __name__ == "__main__":
-    main()
+    vulnerabilities_detected = []
+
+    print("\nTesting for Uncontrolled Resource Consumption Vulnerabilities...\n")
+
+    if check_uncontrolled_file_generation():
+        vulnerabilities_detected.append("Uncontrolled File Generation")
+
+    if check_uncontrolled_memory_consumption():
+        vulnerabilities_detected.append("Uncontrolled Memory Consumption")
+
+    if check_uncontrolled_file_upload():
+        vulnerabilities_detected.append("Uncontrolled File Upload")
+
+    if vulnerabilities_detected:
+        print("\nApplication is vulnerable to the following Uncontrolled Resource Consumption vulnerabilities:\n - " + "\n - ".join(vulnerabilities_detected) + "\n")
+
+        # Perform code analysis only for the detected vulnerabilities
+        analysis_results = analyze_code_for_vulnerabilities(vulnerabilities_detected)
+
+        for vulnerability_type, lines in analysis_results.items():
+            print(f"\n{vulnerability_type} Vulnerabilities found at lines:")
+            for line_number, line in lines:
+                print(f"Line {line_number}: {line}")
+
+    else:
+        print("\nNo Uncontrolled Resource Consumption vulnerabilities detected.\n")
